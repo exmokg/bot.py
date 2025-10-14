@@ -2,6 +2,9 @@ import pymysql
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.utils import executor
+from aiogram.dispatcher import FSMContext
+from aiogram.dispatcher.filters.state import State, StatesGroup
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
 
 # 🔹 Данные для подключения к MySQL (InfinityFree)
 DB_HOST = "sql312.infinityfree.com"
@@ -14,7 +17,13 @@ TOKEN = "8095067567:AAFe08EhwZTh0JKbHvq1mmycRveC9WzlxE4"
 ADMIN_ID = 7685258613
 
 bot = Bot(token=TOKEN)
-dp = Dispatcher(bot)
+storage = MemoryStorage()
+dp = Dispatcher(bot, storage=storage)
+
+# 🔹 Определение состояний для FSM
+class BotStates(StatesGroup):
+    waiting_for_search = State()
+    waiting_for_status_change = State()
 
 # 🔹 Функция подключения к базе
 def connect_db():
@@ -62,12 +71,13 @@ async def admin_panel(message: types.Message):
         await message.answer("🔹 Меню администратора:", reply_markup=admin_menu)
 
 # 🔹 Поиск кандидата по ФИО
-@dp.message_handler(lambda message: message.text == "🔍 Поиск кандидата")
+@dp.message_handler(lambda message: message.text == "🔍 Поиск кандидата", state="*")
 async def search_candidate_prompt(message: types.Message):
+    await BotStates.waiting_for_search.set()
     await message.answer("🔍 Введите ФИО кандидата для поиска:")
 
-@dp.message_handler()
-async def search_candidate(message: types.Message):
+@dp.message_handler(state=BotStates.waiting_for_search)
+async def search_candidate(message: types.Message, state: FSMContext):
     candidate_name = message.text.strip()
     conn = connect_db()
     cursor = conn.cursor()
@@ -92,6 +102,7 @@ async def search_candidate(message: types.Message):
         msg = "❌ Кандидат не найден."
     
     await message.answer(msg, parse_mode="Markdown")
+    await state.finish()
 
 # 🔹 Получение списка кандидатов за день
 @dp.message_handler(lambda message: message.text == "📜 Список кандидатов")
@@ -126,12 +137,13 @@ async def list_kidoks(message: types.Message):
     await message.answer(msg)
 
 # 🔹 Изменение статуса кандидата
-@dp.message_handler(lambda message: message.text == "✅ Изменить статус кандидата")
+@dp.message_handler(lambda message: message.text == "✅ Изменить статус кандидата", state="*")
 async def change_status_prompt(message: types.Message):
+    await BotStates.waiting_for_status_change.set()
     await message.answer("✏ Введите Telegram кандидата и новый статус ('Кидок' или 'Чист')\nПример: `@username Кидок`", parse_mode="Markdown")
 
-@dp.message_handler()
-async def change_status(message: types.Message):
+@dp.message_handler(state=BotStates.waiting_for_status_change)
+async def change_status(message: types.Message, state: FSMContext):
     parts = message.text.split()
     if len(parts) == 2 and parts[1] in ["Кидок", "Чист"]:
         username = parts[0].replace("@", "")
@@ -142,8 +154,12 @@ async def change_status(message: types.Message):
         conn.commit()
         conn.close()
         await message.answer(f"✅ Статус кандидата {username} изменен на {new_status}.")
+        await state.finish()
     elif message.text.startswith("@"):
         await message.answer("❌ Неверный формат. Используйте: `@username Кидок` или `@username Чист`")
+    else:
+        await message.answer("❌ Неверный формат. Используйте: `@username Кидок` или `@username Чист`")
+        await state.finish()
 
 # 🔹 Запуск бота
 if __name__ == "__main__":
